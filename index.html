@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Калькулятор ИМТ</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; background: #f6f5f2; color: #222; margin: 0; padding: 16px; }
+  .card { max-width: 420px; margin: 24px auto; background: #fff; border-radius: 16px; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,.06); }
+  h1 { font-size: 22px; margin: 0 0 16px; }
+  label { display: block; margin: 12px 0 4px; font-weight: 600; }
+  input { width: 100%; box-sizing: border-box; font-size: 18px; padding: 10px; border: 1px solid #ccc; border-radius: 10px; }
+  button { width: 100%; margin-top: 18px; padding: 12px; font-size: 18px; border: 0; border-radius: 10px; background: #c96f53; color: #fff; }
+  #result { margin-top: 18px; font-size: 18px; line-height: 1.5; }
+  .small { color: #777; font-size: 13px; margin-top: 16px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Калькулятор индекса массы тела</h1>
+
+  <label for="weight">Масса тела, кг</label>
+  <input id="weight" type="number" inputmode="decimal" placeholder="например, 80">
+
+  <label for="height">Рост, см</label>
+  <input id="height" type="number" inputmode="decimal" placeholder="например, 178">
+
+  <button onclick="calculate()">Рассчитать</button>
+
+  <div id="result"></div>
+  <div class="small">ИМТ = масса (кг) / рост² (м²). Категории по ВОЗ для взрослых.</div>
+</div>
+
+<script>
+  function calculate() {
+    const weight = parseFloat(document.getElementById('weight').value);
+    const heightM = parseFloat(document.getElementById('height').value) / 100;
+    const result = document.getElementById('result');
+
+    if (!weight || !heightM) {
+      result.textContent = 'Введите массу и рост.';
+      return;
+    }
+
+    const bmi = weight / (heightM * heightM);
+    let category;
+    if (bmi < 18.5) category = 'дефицит массы тела';
+    else if (bmi < 25) category = 'нормальная масса тела';
+    else if (bmi < 30) category = 'избыточная масса тела';
+    else if (bmi < 35) category = 'ожирение I степени';
+    else if (bmi < 40) category = 'ожирение II степени';
+    else category = 'ожирение III степени';
+
+    result.innerHTML = '<b>ИМТ: ' + bmi.toFixed(1) + ' кг/м²</b><br>' + category;
+  }
+</script>
+</body>
+</html>
