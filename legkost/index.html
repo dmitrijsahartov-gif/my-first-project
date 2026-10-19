@@ -215,6 +215,13 @@ h1,h2,h3{font-family:var(--display);margin:0;text-wrap:balance;letter-spacing:-.
 .totals small{display:block;font-size:11px;font-weight:700;color:var(--muted)}
 .totals b{font-family:var(--display);font-size:15px}
 .tip{padding:12px 14px;border-radius:16px;background:color-mix(in srgb,var(--steps) 13%,var(--surface));font-size:14px}
+.adv{display:grid;gap:10px}
+.opt{border:1px solid var(--line);border-radius:18px;padding:12px 14px;display:grid;gap:6px;background:var(--surface)}
+.opt-h{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+.opt-h b{font-size:15px;line-height:1.25}
+.opt-h span{font-family:var(--display);font-weight:700;color:var(--kcal);white-space:nowrap}
+.opt p{margin:0;font-size:13.5px;color:var(--muted)}
+.advisor{background:linear-gradient(160deg,color-mix(in srgb,var(--fat) 18%,var(--surface)),var(--surface) 65%)}
 .warnbox{padding:12px 14px;border-radius:16px;background:color-mix(in srgb,var(--bad) 12%,var(--surface));font-size:14px}
 
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(160px + env(safe-area-inset-bottom,0px));z-index:60;background:var(--fg);color:var(--bg);
@@ -292,7 +299,8 @@ const S = {
   profile: null, days: {}, // key -> {meals, steps, water, weight}
   demo: false,
   col: null, sample: null, sampleImages: false,
-  queues: {}
+  queues: {},
+  advice: { status: "idle", options: [], type: "", note: "" }
 };
 const LS_KEY = "legkost-v1";
 function lsLoad() { try { const r = JSON.parse(localStorage.getItem(LS_KEY) || "null"); if (r && typeof r === "object") return r; } catch (e) {} return null; }
@@ -497,6 +505,56 @@ function mealRow(m, k, del = true) {
 }
 function last7(fn) { const ks = []; for (let i = 6; i >= 0; i--) ks.push(addDays(today(), -i)); return { ks, vals: ks.map(fn), labels: ks.map(dayShort) }; }
 
+/* ---------- advisor ---------- */
+function adviceCard(g, s) {
+  if (!S.sample) return "";
+  const A = S.advice, left = g.kcal - s.kcal;
+  const head = `<div class="row between"><div><div class="eyebrow">Советник</div><h2 style="font-size:17px;margin-top:2px">Что мне съесть${A.type ? " на " + A.type.toLowerCase() : ""}?</h2></div><span class="status num">${left >= 0 ? "осталось " + fmt(left) : "+" + fmt(-left)} ккал</span></div>`;
+  let body;
+  if (A.status === "busy") body = `<div class="ai"><div class="spin"></div><span>Claude подбирает блюда под ваш остаток калорий и белка…</span></div>`;
+  else if (A.status === "done") body = `${A.note ? `<div class="tip">${esc(A.note)}</div>` : ""}<div class="adv">${A.options.map((o, i) => `<div class="opt"><div class="opt-h"><b>${esc(o.name)}</b><span class="num">${fmt(o.kcal)} ккал</span></div>
+      <p class="num">${esc(o.portion || "")}${o.portion ? " · " : ""}Б ${fmt(o.p)} · Ж ${fmt(o.f)} · У ${fmt(o.c)}</p>${o.why ? `<p>${esc(o.why)}</p>` : ""}${o.how ? `<p><b style="color:var(--fg)">Как:</b> ${esc(o.how)}</p>` : ""}
+      <div class="mini-btns"><button class="pill c-kcal" data-act="adviceAdd" data-i="${i}">Съел(а) — записать</button></div></div>`).join("")}</div>
+    <button class="btn ghost wide" data-act="advise">Другие варианты</button>`;
+  else body = `<p class="small muted" style="margin:0">Claude посмотрит, что вы уже съели, сколько калорий и белка осталось, и предложит 3 простых блюда из обычных продуктов.</p>
+    <button class="btn wide" style="background:linear-gradient(140deg,var(--fat),var(--kcal))" data-act="advise">Подобрать блюда</button>`;
+  return `<section class="card advisor stack" style="gap:12px">${head}${body}</section>`;
+}
+async function runAdvice() {
+  if (!S.sample || S.advice.status === "busy") return;
+  const g = goals(), d = day(today()), s = sum(d.meals), p = S.profile;
+  const type = defaultType(), h = new Date().getHours();
+  S.advice = { status: "busy", options: [], type, note: "" }; render();
+  const eaten = d.meals.length ? d.meals.map(m => `${m.type} ${m.time}: ${m.name} — ${m.kcal} ккал, Б${m.p} Ж${m.f} У${m.c}`).join("\n") : "пока ничего";
+  const prompt = `Ты нутрициолог, помогаешь человеку снижать вес без срывов. Сейчас ${pad(h)}:${pad(new Date().getMinutes())}, следующий приём пищи: ${type}.
+Человек: ${p.sex === "m" ? "мужчина" : "женщина"}, ${p.age} лет, ${p.height} см, ${latestWeight()} кг, цель ${p.goalWeight} кг.
+Норма на день: ${g.kcal} ккал, белки ${g.protein} г, жиры ${g.fat} г, углеводы ${g.carbs} г.
+Уже съедено сегодня (${Math.round(s.kcal)} ккал, Б${Math.round(s.p)} Ж${Math.round(s.f)} У${Math.round(s.c)}):
+${eaten}
+Осталось: ${Math.round(g.kcal - s.kcal)} ккал, белка ${Math.max(0, Math.round(g.protein - s.p))} г.
+Предложи 3 разных варианта именно на этот приём пищи: простые блюда из продуктов обычного российского супермаркета, готовка до 20 минут. Каждый вариант должен помещаться в остаток калорий с запасом на оставшиеся приёмы пищи, приоритет — добрать белок и овощи. Если калорий почти не осталось или уже перебор — предложи лёгкие варианты до 150 ккал и мягко скажи об этом в note. Не повторяй то, что уже ели сегодня. Без морализаторства.
+Ответь ТОЛЬКО JSON:
+{"note":"одна короткая фраза поддержки или пояснение, до 120 символов","options":[{"name":"название блюда","portion":"порция, напр. 250 г","kcal":число,"protein":число,"fat":число,"carbs":число,"why":"почему подходит, до 90 символов","how":"как приготовить в 1–2 коротких предложениях"}]}`;
+  try {
+    const r = await S.sample.json(prompt, { modelTier: "default", cache: false });
+    const opts = (Array.isArray(r && r.options) ? r.options : []).slice(0, 3).map(o => ({ name: String(o.name || "Блюдо").slice(0, 70), portion: String(o.portion || "").slice(0, 40), kcal: Math.max(0, Math.round(+o.kcal || 0)), p: Math.round(+o.protein || 0), f: Math.round(+o.fat || 0), c: Math.round(+o.carbs || 0), why: String(o.why || "").slice(0, 140), how: String(o.how || "").slice(0, 260) }));
+    if (!opts.length) throw { code: "empty" };
+    S.advice = { status: "done", options: opts, type, note: r && r.note ? String(r.note).slice(0, 160) : "" };
+  } catch (e) {
+    S.advice = { status: "idle", options: [], type: "", note: "" };
+    toast(e && e.code === "not_granted" ? "Советнику нужно разрешение Claude — разрешите при следующем нажатии" : e && e.code === "rate_limited" ? "Слишком много запросов. Подождите минуту" : "Не получилось подобрать. Попробуйте ещё раз");
+  }
+  render();
+}
+function adviceAdd(i) {
+  const o = S.advice.options[i]; if (!o) return;
+  const n = new Date(); const k = today(); const cur = day(k);
+  const meal = { id: uid(), name: o.name, type: S.advice.type || defaultType(), time: pad(n.getHours()) + ":" + pad(n.getMinutes()), kcal: o.kcal, p: o.p, f: o.f, c: o.c, items: [{ name: o.name, g: 0, kcal: o.kcal }] };
+  setDay(k, { meals: (cur.meals || []).concat(meal) });
+  S.advice = { status: "idle", options: [], type: "", note: "" }; render();
+  const g = goals(), s = sum(day(k).meals); toast(`Записано. Осталось ${fmt(Math.max(0, g.kcal - s.kcal))} ккал`);
+}
+
 /* ---------- screens ---------- */
 function header() {
   const p = S.profile; const h = new Date().getHours();
@@ -529,6 +587,7 @@ function scrToday() {
     <div class="row between" style="align-items:flex-end"><h3 class="num">${fmt1(lw)}<small>кг</small></h3><span class="small muted num">${lost > 0 ? "−" + fmt1(lost) + " кг со старта" : "старт " + fmt1(S.profile.startWeight) + " кг"} · цель ${fmt1(S.profile.goalWeight)}</span></div>
     <div class="progress"><i style="width:${clamp(lost / (S.profile.startWeight - S.profile.goalWeight || 1), 0, 1) * 100}%"></i></div></section>
   <section class="quote">${I.quote}<div class="eyebrow">Мысль дня</div><p>${esc(q)}</p></section>
+  ${adviceCard(g, s)}
   <section class="card"><div class="row between"><h2 style="font-size:17px">Сегодня съедено</h2><button class="pill c-kcal" data-act="add">+ Добавить</button></div>
     <div style="margin-top:8px">${d.meals.length ? d.meals.slice().sort((a, b) => (a.time || "").localeCompare(b.time || "")).map(m => mealRow(m, today(), false)).join("") : `<div class="empty">Пока пусто. Сфотографируйте тарелку — Claude посчитает калории.</div>`}</div></section>
   <section class="card"><div class="row between"><h2 style="font-size:17px">Калории за неделю</h2><span class="legend"><span><span class="dot" style="background:var(--kcal)"></span>ккал</span><span>- - цель</span></span></div>${bars(w7.vals, w7.labels, g.kcal, "var(--kcal)", { overBad: true, label: "Калории за 7 дней" })}</section>
@@ -777,10 +836,12 @@ document.addEventListener("click", e => {
   if (a === "photo") { if (needReal()) e.preventDefault(); return; }
   if (a === "close") { closeSheet(); return; }
   if (a === "onboard") { onboard(S.demo); return; }
-  if (["add", "steps", "stepsSet", "water", "weightLog", "delMeal", "stepsGoal", "resetAsk"].includes(a) && needReal()) return;
+  if (["advise", "adviceAdd", "add", "steps", "stepsSet", "water", "weightLog", "delMeal", "stepsGoal", "resetAsk"].includes(a) && needReal()) return;
   const k = today(), d = day(k), g = goals();
   switch (a) {
     case "add": draft = newDraft(); openSheet(mealSheet()); break;
+    case "advise": runAdvice(); break;
+    case "adviceAdd": adviceAdd(+el.dataset.i); break;
     case "steps": { const before = d.steps; setDay(k, { steps: d.steps + +el.dataset.v }); render(); if (before < g.steps && day(k).steps >= g.steps) { celebrate(); toast("Цель по шагам выполнена!"); } break; }
     case "stepsSet": numberSheet("Шаги за сегодня", "Число шагов из «Здоровья» или Google Fit", d.steps || "", "stepsSave", "steps", "", 1); break;
     case "stepsSave": { const v = Math.round(+$("#numIn").value); if (!(v >= 0 && v < 100000)) { toast("Введите число от 0 до 99 999"); return; } const before = d.steps; setDay(k, { steps: v }); closeSheet(); render(); if (before < g.steps && v >= g.steps) { celebrate(); toast("Цель по шагам выполнена!"); } break; }
