@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import math
-import sys
 
 
 def read_float(prompt: str, *, minimum: float | None = None) -> float:
@@ -69,22 +68,6 @@ def relative_wall_thickness(pwtd_cm: float, lvidd_cm: float) -> float:
     return (2.0 * pwtd_cm) / lvidd_cm
 
 
-def interpret_ef(ef: float) -> str:
-    if ef >= 55:
-        return "сохранённая (≥ 55%)"
-    if ef >= 45:
-        return "лёгкое снижение (45–54%)"
-    if ef >= 30:
-        return "умеренное снижение (30–44%)"
-    return "выраженное снижение (< 30%)"
-
-
-def interpret_rwt(rwt: float) -> str:
-    if rwt > 0.42:
-        return "повышена (> 0,42) — концентрический тип геометрии"
-    return "в пределах нормы (≤ 0,42) — эксцентрический тип / норма"
-
-
 # Нормы массы миокарда ЛЖ по рекомендациям ASE (ориентиры для взрослых).
 LV_MASS_NORMS = {
     "м": {
@@ -106,30 +89,44 @@ def norms_for_sex(sex: str) -> dict:
     return LV_MASS_NORMS[sex]
 
 
-def interpret_lv_mass(mass_g: float, sex: str) -> str:
-    """Интерпретация абсолютной массы миокарда с учётом пола."""
+def interpret_ef(ef: float) -> tuple[str, str]:
+    """Возвращает (оценка, норма/комментарий)."""
+    if ef >= 55:
+        return "норма", "норма ≥ 55%"
+    if ef >= 45:
+        return "снижена", "лёгкое снижение (45–54%)"
+    if ef >= 30:
+        return "снижена", "умеренное снижение (30–44%)"
+    return "снижена", "выраженное снижение (< 30%)"
+
+
+def interpret_lv_mass(mass_g: float, sex: str) -> tuple[str, str]:
     norms = norms_for_sex(sex)
     limit = norms["mass_max_g"]
-    label = norms["label"]
+    ref = f"норма ≤ {limit:g} г ({norms['label']})"
     if mass_g > limit:
-        return f"выше нормы (> {limit:g} г для {label})"
-    return f"в пределах нормы (≤ {limit:g} г для {label})"
+        return "выше нормы", ref
+    return "норма", ref
 
 
-def interpret_lvmi(lvmi: float, sex: str) -> str:
-    """Интерпретация индексированной массы миокарда с учётом пола."""
+def interpret_lvmi(lvmi: float, sex: str) -> tuple[str, str]:
     norms = norms_for_sex(sex)
     limit = norms["lvmi_max"]
-    label = norms["label"]
+    ref = f"норма ≤ {limit:g} г/м² ({norms['label']})"
     if lvmi > limit:
-        return f"гипертрофия ЛЖ (> {limit:g} г/м² для {label})"
-    return f"без гипертрофии (≤ {limit:g} г/м² для {label})"
+        return "гипертрофия", ref
+    return "норма", ref
+
+
+def interpret_rwt(rwt: float) -> tuple[str, str]:
+    ref = "норма ≤ 0,42"
+    if rwt > 0.42:
+        return "повышена", f"{ref}; концентрический тип"
+    return "норма", f"{ref}; эксцентрический тип / норма"
 
 
 def ask_sex() -> str:
-    print("Выбор пола нужен для норм массы миокарда ЛЖ:")
-    print("  мужчины — ММЛЖ ≤ 224 г, ИММЛЖ ≤ 115 г/м²")
-    print("  женщины — ММЛЖ ≤ 162 г, ИММЛЖ ≤ 95 г/м²")
+    print("Пол нужен для норм массы миокарда (м — мужской, ж — женский).")
     while True:
         sex = input("Пол пациента (м/ж): ").strip().lower()
         if sex in {"м", "m", "муж", "мужской", "male"}:
@@ -142,8 +139,8 @@ def ask_sex() -> str:
 def ask_ef_method() -> str:
     print()
     print("Способ расчёта фракции выброса:")
-    print("  1 — по конечному диастолическому и систолическому объёмам (КДО, КСО)")
-    print("  2 — по размерам ЛЖ методом Teichholz (КДР, КСР)")
+    print("  1 — по объёмам (КДО, КСО)")
+    print("  2 — по Teichholz (КДР, КСР)")
     while True:
         choice = input("Выберите 1 или 2: ").strip()
         if choice in {"1", "2"}:
@@ -151,14 +148,81 @@ def ask_ef_method() -> str:
         print("Ошибка: введите 1 или 2.")
 
 
-def print_separator() -> None:
-    print("-" * 56)
+def print_row(name: str, value: str, assessment: str = "", note: str = "") -> None:
+    """Строка таблицы: показатель | значение | оценка | пояснение."""
+    print(f"  {name:<26} {value:>16}  {assessment:<14} {note}")
+
+
+def print_results(
+    *,
+    sex: str,
+    height_cm: float,
+    weight_kg: float,
+    bsa: float,
+    ef: float,
+    ef_source: str,
+    edv_ml: float,
+    esv_ml: float,
+    stroke_volume: float,
+    mass: float,
+    lvmi: float,
+    rwt: float,
+) -> None:
+    norms = norms_for_sex(sex)
+    ef_status, ef_note = interpret_ef(ef)
+    mass_status, mass_note = interpret_lv_mass(mass, sex)
+    lvmi_status, lvmi_note = interpret_lvmi(lvmi, sex)
+    rwt_status, rwt_note = interpret_rwt(rwt)
+
+    width = 78
+    line = "─" * width
+
+    print()
+    print(line)
+    print(" РЕЗУЛЬТАТЫ ЭхоКГ".center(width))
+    print(line)
+    print(
+        f"  Пациент: {norms['sex_name']}, "
+        f"рост {height_cm:g} см, масса {weight_kg:g} кг"
+    )
+    print(
+        f"  Нормы ММЛЖ ({norms['label']}): "
+        f"≤ {norms['mass_max_g']:g} г / ≤ {norms['lvmi_max']:g} г/м²"
+    )
+    print(line)
+    print(f"  {'Показатель':<26} {'Значение':>16}  {'Оценка':<14} Пояснение")
+    print(f"  {'-' * 26} {'-' * 16}  {'-' * 14} {'-' * 28}")
+    print_row("ППТ", f"{bsa:.2f} м²", "—", "формула Мостеллера")
+    print_row("ФВ ЛЖ", f"{ef:.1f} %", ef_status, f"{ef_note}; {ef_source}")
+    print_row("  КДО / КСО", f"{edv_ml:.1f} / {esv_ml:.1f} мл", "", "")
+    print_row("  Ударный объём", f"{stroke_volume:.1f} мл", "", "")
+    print_row("Масса миокарда ЛЖ", f"{mass:.1f} г", mass_status, mass_note)
+    print_row("ИММЛЖ", f"{lvmi:.1f} г/м²", lvmi_status, lvmi_note)
+    print_row("ОТС", f"{rwt:.2f}", rwt_status, rwt_note)
+    print(line)
+
+    flags: list[str] = []
+    if ef_status != "норма":
+        flags.append(f"ФВ {ef_status}")
+    if mass_status != "норма":
+        flags.append("ММЛЖ выше нормы")
+    if lvmi_status != "норма":
+        flags.append("гипертрофия по ИММЛЖ")
+    if rwt_status != "норма":
+        flags.append("ОТС повышена")
+
+    if flags:
+        print("  Сводка: " + "; ".join(flags) + ".")
+    else:
+        print("  Сводка: основные показатели в пределах ориентировочных норм.")
+    print("  Интерпретация ориентировочная; заключение формирует врач.")
+    print(line)
 
 
 def main() -> int:
-    print("=" * 56)
+    print("─" * 56)
     print("  Калькулятор основных показателей ЭхоКГ")
-    print("=" * 56)
+    print("─" * 56)
     print("Вводите измерения в указанных единицах.")
     print("Дробную часть можно отделять точкой или запятой.")
     print()
@@ -199,37 +263,21 @@ def main() -> int:
     mass = lv_mass_ase(ivsd_cm, lvidd_cm, pwtd_cm)
     lvmi = indexed_lv_mass(mass, bsa)
     rwt = relative_wall_thickness(pwtd_cm, lvidd_cm)
-    norms = norms_for_sex(sex)
 
-    print()
-    print_separator()
-    print("РЕЗУЛЬТАТЫ РАСЧЁТА")
-    print_separator()
-    print(f"Пол пациента:                       {norms['sex_name']}")
-    print(
-        f"Нормы массы миокарда ({norms['label']}): "
-        f"ММЛЖ ≤ {norms['mass_max_g']:g} г, "
-        f"ИММЛЖ ≤ {norms['lvmi_max']:g} г/м²"
+    print_results(
+        sex=sex,
+        height_cm=height_cm,
+        weight_kg=weight_kg,
+        bsa=bsa,
+        ef=ef,
+        ef_source=ef_source,
+        edv_ml=edv_ml,
+        esv_ml=esv_ml,
+        stroke_volume=stroke_volume,
+        mass=mass,
+        lvmi=lvmi,
+        rwt=rwt,
     )
-    print()
-    print(f"Площадь поверхности тела (ППТ):     {bsa:.2f} м²")
-    print(f"  (формула Мостеллера)")
-    print()
-    print(f"Фракция выброса ЛЖ ({ef_source}):")
-    print(f"  ФВ = {ef:.1f}% — {interpret_ef(ef)}")
-    print(f"  КДО = {edv_ml:.1f} мл, КСО = {esv_ml:.1f} мл")
-    print(f"  Ударный объём = {stroke_volume:.1f} мл")
-    print()
-    print(f"Масса миокарда ЛЖ (ASE):            {mass:.1f} г")
-    print(f"  {interpret_lv_mass(mass, sex)}")
-    print(f"Индексированная масса миокарда:     {lvmi:.1f} г/м²")
-    print(f"  {interpret_lvmi(lvmi, sex)}")
-    print()
-    print(f"Относительная толщина стенок:       {rwt:.2f}")
-    print(f"  {interpret_rwt(rwt)}")
-    print_separator()
-    print("Справочно: формулы ASE / Мостеллера; интерпретация — ориентиры.")
-    print("Окончательное заключение формирует врач.")
     return 0
 
 
