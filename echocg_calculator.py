@@ -85,20 +85,51 @@ def interpret_rwt(rwt: float) -> str:
     return "в пределах нормы (≤ 0,42) — эксцентрический тип / норма"
 
 
+# Нормы массы миокарда ЛЖ по рекомендациям ASE (ориентиры для взрослых).
+LV_MASS_NORMS = {
+    "м": {
+        "label": "мужчин",
+        "sex_name": "мужской",
+        "mass_max_g": 224.0,
+        "lvmi_max": 115.0,
+    },
+    "ж": {
+        "label": "женщин",
+        "sex_name": "женский",
+        "mass_max_g": 162.0,
+        "lvmi_max": 95.0,
+    },
+}
+
+
+def norms_for_sex(sex: str) -> dict:
+    return LV_MASS_NORMS[sex]
+
+
+def interpret_lv_mass(mass_g: float, sex: str) -> str:
+    """Интерпретация абсолютной массы миокарда с учётом пола."""
+    norms = norms_for_sex(sex)
+    limit = norms["mass_max_g"]
+    label = norms["label"]
+    if mass_g > limit:
+        return f"выше нормы (> {limit:g} г для {label})"
+    return f"в пределах нормы (≤ {limit:g} г для {label})"
+
+
 def interpret_lvmi(lvmi: float, sex: str) -> str:
-    """Ориентиры ASE: мужчины > 115 г/м², женщины > 95 г/м²."""
-    if sex == "м":
-        threshold = 115.0
-        label = "мужчин"
-    else:
-        threshold = 95.0
-        label = "женщин"
-    if lvmi > threshold:
-        return f"гипертрофия ЛЖ (> {threshold:g} г/м² для {label})"
-    return f"без гипертрофии (порог для {label}: {threshold:g} г/м²)"
+    """Интерпретация индексированной массы миокарда с учётом пола."""
+    norms = norms_for_sex(sex)
+    limit = norms["lvmi_max"]
+    label = norms["label"]
+    if lvmi > limit:
+        return f"гипертрофия ЛЖ (> {limit:g} г/м² для {label})"
+    return f"без гипертрофии (≤ {limit:g} г/м² для {label})"
 
 
 def ask_sex() -> str:
+    print("Выбор пола нужен для норм массы миокарда ЛЖ:")
+    print("  мужчины — ММЛЖ ≤ 224 г, ИММЛЖ ≤ 115 г/м²")
+    print("  женщины — ММЛЖ ≤ 162 г, ИММЛЖ ≤ 95 г/м²")
     while True:
         sex = input("Пол пациента (м/ж): ").strip().lower()
         if sex in {"м", "m", "муж", "мужской", "male"}:
@@ -168,11 +199,19 @@ def main() -> int:
     mass = lv_mass_ase(ivsd_cm, lvidd_cm, pwtd_cm)
     lvmi = indexed_lv_mass(mass, bsa)
     rwt = relative_wall_thickness(pwtd_cm, lvidd_cm)
+    norms = norms_for_sex(sex)
 
     print()
     print_separator()
     print("РЕЗУЛЬТАТЫ РАСЧЁТА")
     print_separator()
+    print(f"Пол пациента:                       {norms['sex_name']}")
+    print(
+        f"Нормы массы миокарда ({norms['label']}): "
+        f"ММЛЖ ≤ {norms['mass_max_g']:g} г, "
+        f"ИММЛЖ ≤ {norms['lvmi_max']:g} г/м²"
+    )
+    print()
     print(f"Площадь поверхности тела (ППТ):     {bsa:.2f} м²")
     print(f"  (формула Мостеллера)")
     print()
@@ -182,6 +221,7 @@ def main() -> int:
     print(f"  Ударный объём = {stroke_volume:.1f} мл")
     print()
     print(f"Масса миокарда ЛЖ (ASE):            {mass:.1f} г")
+    print(f"  {interpret_lv_mass(mass, sex)}")
     print(f"Индексированная масса миокарда:     {lvmi:.1f} г/м²")
     print(f"  {interpret_lvmi(lvmi, sex)}")
     print()
