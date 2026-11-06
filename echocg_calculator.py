@@ -5,6 +5,7 @@
 Рассчитывает:
   - площадь поверхности тела (ППТ, формула Мостеллера);
   - фракцию выброса ЛЖ (по объёмам или по Teichholz);
+  - ударный объём и индексированный ударный объём;
   - массу миокарда ЛЖ (формула ASE);
   - индексированную массу миокарда ЛЖ;
   - относительную толщину стенок (ОТС).
@@ -40,11 +41,22 @@ def teichholz_volume(diameter_cm: float) -> float:
     return (7.0 * diameter_cm**3) / (2.4 + diameter_cm)
 
 
-def ejection_fraction(edv_ml: float, esv_ml: float) -> float:
-    """Фракция выброса, %."""
+def stroke_volume(edv_ml: float, esv_ml: float) -> float:
+    """Ударный объём: УО = КДО − КСО, мл."""
     if edv_ml <= esv_ml:
         raise ValueError("КДО должен быть больше КСО.")
-    return ((edv_ml - esv_ml) / edv_ml) * 100.0
+    return edv_ml - esv_ml
+
+
+def indexed_stroke_volume(sv_ml: float, bsa_m2: float) -> float:
+    """Индексированный ударный объём: ИУО = УО / ППТ, мл/м²."""
+    return sv_ml / bsa_m2
+
+
+def ejection_fraction(edv_ml: float, esv_ml: float) -> float:
+    """Фракция выброса, %."""
+    sv = stroke_volume(edv_ml, esv_ml)
+    return (sv / edv_ml) * 100.0
 
 
 def lv_mass_ase(ivsd_cm: float, lvidd_cm: float, pwtd_cm: float) -> float:
@@ -98,6 +110,26 @@ def interpret_ef(ef: float) -> tuple[str, str]:
     if ef >= 30:
         return "снижена", "умеренное снижение (30–44%)"
     return "снижена", "выраженное снижение (< 30%)"
+
+
+def interpret_stroke_volume(sv_ml: float) -> tuple[str, str]:
+    """Ориентир УО у взрослых: примерно 60–100 мл."""
+    ref = "ориентир 60–100 мл"
+    if sv_ml < 60:
+        return "снижен", ref
+    if sv_ml > 100:
+        return "повышен", ref
+    return "норма", ref
+
+
+def interpret_svi(svi: float) -> tuple[str, str]:
+    """Ориентир ИУО: примерно 33–47 мл/м²."""
+    ref = "ориентир 33–47 мл/м²"
+    if svi < 33:
+        return "снижен", ref
+    if svi > 47:
+        return "повышен", ref
+    return "норма", ref
 
 
 def interpret_lv_mass(mass_g: float, sex: str) -> tuple[str, str]:
@@ -163,13 +195,16 @@ def print_results(
     ef_source: str,
     edv_ml: float,
     esv_ml: float,
-    stroke_volume: float,
+    sv_ml: float,
+    svi: float,
     mass: float,
     lvmi: float,
     rwt: float,
 ) -> None:
     norms = norms_for_sex(sex)
     ef_status, ef_note = interpret_ef(ef)
+    sv_status, sv_note = interpret_stroke_volume(sv_ml)
+    svi_status, svi_note = interpret_svi(svi)
     mass_status, mass_note = interpret_lv_mass(mass, sex)
     lvmi_status, lvmi_note = interpret_lvmi(lvmi, sex)
     rwt_status, rwt_note = interpret_rwt(rwt)
@@ -195,7 +230,8 @@ def print_results(
     print_row("ППТ", f"{bsa:.2f} м²", "—", "формула Мостеллера")
     print_row("ФВ ЛЖ", f"{ef:.1f} %", ef_status, f"{ef_note}; {ef_source}")
     print_row("  КДО / КСО", f"{edv_ml:.1f} / {esv_ml:.1f} мл", "", "")
-    print_row("  Ударный объём", f"{stroke_volume:.1f} мл", "", "")
+    print_row("Ударный объём (УО)", f"{sv_ml:.1f} мл", sv_status, f"{sv_note}; УО = КДО − КСО")
+    print_row("ИУО", f"{svi:.1f} мл/м²", svi_status, f"{svi_note}; ИУО = УО / ППТ")
     print_row("Масса миокарда ЛЖ", f"{mass:.1f} г", mass_status, mass_note)
     print_row("ИММЛЖ", f"{lvmi:.1f} г/м²", lvmi_status, lvmi_note)
     print_row("ОТС", f"{rwt:.2f}", rwt_status, rwt_note)
@@ -204,6 +240,10 @@ def print_results(
     flags: list[str] = []
     if ef_status != "норма":
         flags.append(f"ФВ {ef_status}")
+    if sv_status != "норма":
+        flags.append(f"УО {sv_status}")
+    if svi_status != "норма":
+        flags.append(f"ИУО {svi_status}")
     if mass_status != "норма":
         flags.append("ММЛЖ выше нормы")
     if lvmi_status != "норма":
@@ -247,7 +287,6 @@ def main() -> int:
             print(f"Ошибка расчёта ФВ: {exc}")
             return 1
         ef_source = "по объёмам (КДО/КСО)"
-        stroke_volume = edv_ml - esv_ml
     else:
         lvids_cm = read_float("Конечно-систолический размер (КСР), см: ", minimum=0)
         if lvidd_cm <= lvids_cm:
@@ -255,11 +294,16 @@ def main() -> int:
             return 1
         edv_ml = teichholz_volume(lvidd_cm)
         esv_ml = teichholz_volume(lvids_cm)
-        ef = ejection_fraction(edv_ml, esv_ml)
+        try:
+            ef = ejection_fraction(edv_ml, esv_ml)
+        except ValueError as exc:
+            print(f"Ошибка расчёта ФВ: {exc}")
+            return 1
         ef_source = "по Teichholz (КДР/КСР)"
-        stroke_volume = edv_ml - esv_ml
 
     bsa = body_surface_area(height_cm, weight_kg)
+    sv_ml = stroke_volume(edv_ml, esv_ml)
+    svi = indexed_stroke_volume(sv_ml, bsa)
     mass = lv_mass_ase(ivsd_cm, lvidd_cm, pwtd_cm)
     lvmi = indexed_lv_mass(mass, bsa)
     rwt = relative_wall_thickness(pwtd_cm, lvidd_cm)
@@ -273,7 +317,8 @@ def main() -> int:
         ef_source=ef_source,
         edv_ml=edv_ml,
         esv_ml=esv_ml,
-        stroke_volume=stroke_volume,
+        sv_ml=sv_ml,
+        svi=svi,
         mass=mass,
         lvmi=lvmi,
         rwt=rwt,
